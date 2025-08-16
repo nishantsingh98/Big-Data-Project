@@ -1,0 +1,211 @@
+---
+title: "Big Data Analysis and Project"
+subtitle: "Assignment 1: Part B (Big Data Analysis)"
+author: "Nishant Singh a1941585"
+date: "June 25, 2025"
+
+output:
+  bookdown::pdf_document2:
+    toc: true
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning = FALSE)
+pacman::p_load(tidyverse, tidymodels, skimr, readxl, corrplot, car, bookdown)
+
+```
+
+
+```{r include=FALSE}
+# reading the data
+city_hour <- read_csv("city_hour.csv")
+crop_production <- read_csv("crop_production_major_3_crops.csv")
+festival_data <- read_excel("Indian_festival_dates_2015-2020.xlsx") 
+```
+
+# Part 1 Data Description
+
+Performing exploratory data analysis in the previous report has led to a refinement of the initial question to: **"Predicting the AQI of New Delhi and Ahmedabad and visualize the specific impact of festivals (Diwali) and agricultural practices, along with the time it takes for AQI to return to normal levels after such events."** The following datasets will be used to address the objective of the research and their key features are described below:
+
+1. city_hour.csv – Air Quality Data (Rao 2020)
+ 
+    The key features of this dataset are the quantitative values of PM2.5, PM10, NO2, SO2, CO and O3 that will be used to predict the AQI of the city (Delhi and Ahmedabad) using the formula from Central Pollution Control Board (CPBC 2025). They contain the hourly data of the pollutant observations from the year 2015 to 2020. 
+    
+2. crop_production_major_3_crops.csv – Agricultural Data (Unified Portal for Agricultural Statistics 2025)
+    
+    The key features of the datasets are Crop and Season which represent the name of the crop and the season in which the crop is grown in. These features when merged with the primary dataset (`city_hour.csv`) will help determine the impact of agricultural practices on the AQI of the city (Delhi and Ahmedabad).
+    
+
+3. Indian_festival_dates_2015_2020.xlsx – Festival Dates data
+    
+    The key features of the datsets are Festival and Dates which when merged with the primary dataset (`city_hour.csv`) will help answer the following questions:
+    1. Which festival results in the worst air quality in India?
+    2. What is the cooling off period after a festival for the Air Quality to return to the normal level?
+
+# Part 2 Clustering/Pattern {#clustering}
+
+## Patterns due to the impact of festival and crop burning season on AQI
+
+```{r fig-avg-aqi-months, fig.cap="Boxplot Distribution of average AQI across the months from 2015 to 2020"}
+library(tidyverse)
+library(lubridate)
+
+monthly_aqi_data <- city_hour %>%
+  mutate(
+    year = year(Datetime),
+    month_num = month(Datetime),
+    month_label = month(Datetime, label = TRUE, abbr = TRUE)
+  )
+
+# removing extreme outliers
+aqi_threshold <- quantile(monthly_aqi_data$AQI, 0.95, na.rm = TRUE)
+
+monthly_aqi_filtered <- monthly_aqi_data %>%
+  filter(AQI <= aqi_threshold)
+
+ggplot(monthly_aqi_filtered, aes(x = month_label, y = AQI)) +
+  geom_boxplot(fill = "skyblue") +
+  labs(
+    title = "Average AQI across the months",
+    x = "Months",
+    y = "AQI"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+Ignoring the outliers, there is a clear pattern in the average AQI across the months, the AQI gradually decreases from the months of February to September and significantly increasing in the months of October, November, December and peaking in January. This trend coincides with the dates for major festivals such as Dussehra and Diwali celebrated in the months of October/November along with New Year's Eve on 31st December. These trends also coincide with the crop burning season September to December (PurpleAir 2022).
+
+
+## Patterns/Trends in AQI of Delhi and Ahmedabad
+
+```{r fig-daily-aqi, fig.cap="Daily AQI Trends in the states Delhi and Ahmedabad from 2015 to 2020"}
+library(tidyverse)
+library(lubridate)
+
+city_hour %>%
+  filter(City %in% c("Delhi", "Ahmedabad")) %>%
+  mutate(date = as.Date(Datetime)) %>%
+  ggplot(aes(x = date, y = AQI, color = City)) +
+  geom_line(alpha = 0.4) + 
+  geom_smooth(method = "loess", se = FALSE, span = 0.3, size = 1)+
+  labs(
+    title = "Daily AQI Trends: Delhi vs Ahmedabad",
+    x = "Date",
+    y = "AQI",
+    color = "City"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+The trend is positive for Ahmedabad, peaking during the year 2019 then gradually decreasing in the following year this sudden improvement in AQI could be due to Covid-19 pandemic and the lockdown imposed which could have resulted in reduction of the pollutant levels leading to a lower AQI. 
+
+## Variable importance plots in AQI to find the most important predictor in a simple linear regression model
+
+```{r fig-vip-plot, fig.cap="Variable Importance Plot showing the order of importance for predictor variables (Pollutants) on the response (AQI) in a linear regression model"}
+library(vip)
+
+df_filtered <- city_hour %>%
+  select(AQI, PM2.5, PM10, SO2, NOx, NH3, CO, O3, NO, NO2, Benzene, Toluene, Xylene) %>%
+  na.omit()
+
+lm_model <- linear_reg() %>%
+  set_engine("lm") %>%
+  fit(AQI ~ ., data = df_filtered)
+
+vip(lm_model$fit)
+```
+
+The graph shows that PM2.5 is the most important predictor for AQI, followed by PM10, O3 and CO. Burning of fire crackers and crop stubble primarily release PM10, PM2.5, CO, SO2 (Gouder, C., & Montefort, S. 2014), which supports these findings for important predictor. Thus we can remove the remaining pollutants with lower importance scores such as Benzene, Xylene and Toluene and simplify the further research.  
+
+## Correlation Plot of the air pollutants to see correlation between the predictors (air pollutants)
+
+```{r fig-corr-plot, fig.cap="Correlation plot showing the relationships between pollutant variables used to predict AQI"}
+cor_mat <- cor(df_filtered)
+corrplot(cor_mat, method = "color", type = "lower", addCoef.col = "black", number.cex = 0.65, diag = FALSE)
+
+```
+
+The Correlation Plot of AQI shows high correlation (0.86) between PM2.5 and PM10 which is justifiable since PM10 particles include PM2.5 particles, and they often share the same emission sources. However, there is a negative correlation between O3 and NOx, when they are both important predictors hence there is multicollinearity in the predictors i.e. the predictors are not independent and fail to provide unique information. This can be confirmed using Variance Inflation Factor (VIF) values for a linear regression model. 
+
+
+```{r fig.cap="Barplot of Variance Inflation Factor (VIF) values indicating multicollinearity among pollutant predictors in the AQI regression model"}
+
+lm_model_for_vif <- lm(AQI ~ ., data = df_filtered)
+
+vif_values <- vif(lm_model_for_vif)
+print(vif_values)
+
+barplot(vif_values, col = "skyblue", main = "Barplot: Variance Inflation Factor (VIF)")
+```
+
+A VIF value greater than 5 or 10 indicates a problem of multicollinearity and the barplot clearly indicates that NOx and NO have a VIF of 8.215130 and 5.09 respectively which represents redundancy between the predictor variables (pollutants) and thus needs to be manged by removing the variables.
+
+# Part 3 Visualisation
+
+Visualisation results shown in **2 Clustering/Pattern** [(click here)](#clustering) 
+
+# Part 4 Problem Refinement
+
+Previous problem statement:
+"Predicting the AQI of New Delhi and Ahmedabad and visualize the specific impact of festivals (Diwali) and agricultural practices, along with the time it takes for AQI to return to normal levels after such events."
+
+After the analysis in this report, the assumption that AQI values increase during festivals and crop stubble burning season is solidified, the months from October to February see a significant increase in the AQI values and this period coincides with festival and stubble burning season. 
+
+Variable importance for the prediction of AQI revealed that PM2.5 and PM10 are the strongest predictors of AQI which was strengthened in correlation analysis, however, few predictors need to be removed such as Benzene, Xylene and Toluene and finally VIF analysis showed multicollinearity between NO and NOx leading to redundancy in the dataset hence they too should be removed.
+
+A few limitations were also identified while exploring the datasets, including a missing link between crop harvest and air quality dataset periods hence we need to map cities to states to merge datasets effectively thus requiring an additional city and state dataset (India_city_state.csv) (Pandey, P 2020). The dataset also lacks specific stubble burning dates. Crop production dataset currently uses broad seasonal labels (Rabi, Kharif, Zaid) which need to be converted into corresponding months to align with air quality data.
+
+After the analysis and accounting for the limitations in the current report the problem statement can be further refined to, "**AQI predictions for New Delhi and Ahmedabad during high pollution months (October to February) using key pollutant indicators to understand the air quality variations resulting due to festivals and crop stubble burning**" 
+
+# Part 5 References
+
+1. Rao, R 2020, _Air Quality Data in India (2015 - 2020)_, Kaggle, viewed 3 June 2025, <https://www.kaggle.com/datasets/rohanrao/air-quality-data-in-india>
+
+2. Kumar, A 2025, _Pollution in India_, Encyclopedia Britannica, viewed 5 June 2025, <https://www.britannica.com/topic/pollution-in-India.>
+
+3. Unified Portal for Agricultural Statistics: UPAg 2025, _APY Cropwise Insights_, UPAG, viewed 5 June 2025, <https://upag.gov.in/.>
+
+4. Central Pollution Control Board n.d., _About National Air Quality Index_, Central Pollution Control Board, viewed 3 June 2025, <https://cpcb.nic.in/displaypdf.php?id=bmF0aW9uYWwtYWlyLXF1YWxpdHktaW5kZXgvQWJvdXRfQVFJLnBkZg>
+
+5. Basu, M 2019, ‘The Great Smog of Delhi’, _Lung India_, vol. 36(3), pp. 239, DOI:10.4103/lungindia.lungindia_363_18.
+
+6. Regan, H 2024, _Air pollution in Asia worsened in 2023, with Bangladesh, Pakistan, and India among the worst hit_, CNN, viewed 5 June 2025, <https://edition.cnn.com/2024/03/18/climate/air-pollution-report-2023-asia-climate-intl-hnk.>
+
+7. Dybwad, A 2022, 'What to Know About India’s Crop Burning Season', _PurpleAir_, 16 November, viewed 1 July 2025, <https://www2.purpleair.com/blogs/blog-home/what-to-know-about-india-s-crop-burning-season#:~:text=India's%20crop%20burning%20season%20usually,rural%20areas%20to%20metropolitan%20cities>
+
+8. Pandey, P 2020, _Indian cities database_, Kaggle, viewed 1 July 2025, <https://www.kaggle.com/datasets/parulpandey/indian-cities-database>
+
+9. Chanana I, Sharma A, Kumar P, Kumar L, Kulshreshtha S, Kumar S, Patel SKS, 2023, 'Combustion and Stubble Burning: A Major Concern for the Environment and Human Health', _Fire_ 2023, 6, 79, DOI: https://doi.org/10.3390/fire6020079
+
+10. Gouder, C., & Montefort, S 2014, 'Potential impact of fireworks on respiratory health', _Lung India_, 31(4), 375–379, DOI: https://doi.org/10.4103/0970-2113.142124
+
+# Appendix
+
+## Dataset Summary Tables:
+
+### dataset 1: (Rao 2020)
+```{r }
+
+skim_without_charts(city_hour)
+```
+
+### dataset 2: Agricultural Data (Unified Portal for Agricultural Statistics 2025)
+```{r }
+skim_without_charts(crop_production)
+```
+
+### dataset 3: Festival Dates data
+```{r }
+skim_without_charts(festival_data)
+```
+
+### dataset 4: Indian city and states to be used in next part for merging crop production dataset with air quality dataset
+```{r }
+indian_city_states <- read_csv("./other_datasets/India_city_states.csv")
+skim_without_charts(indian_city_states)
+```
