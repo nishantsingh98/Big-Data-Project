@@ -1,0 +1,833 @@
+---
+title: "Big Data Analysis and Project"
+
+
+output:
+  bookdown::pdf_document2:
+    toc: true
+    fig_caption: true
+    number_sections: true
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning = FALSE)
+pacman::p_load(tidyverse, tidymodels, skimr, readxl, corrplot, car, bookdown, VIM, janitor, xgboost, doParallel, knitr)
+
+```
+
+
+```{r include=FALSE}
+# reading the data
+city_hour <- read_csv("city_hour.csv")
+crop_production <- read_csv("crop_production_major_3_crops.csv")
+festival_data <- read_excel("Indian_festival_dates_2015-2020.xlsx") 
+indian_city_states <- read_csv("./other_datasets/India_city_states.csv")
+```
+\newpage
+# Part 1 Problem Description
+
+After performing analysis in part B has led to the led to a refinement of the initial question to: **'AQI predictions for New Delhi and Ahmedabad during high pollution months (October to February) using key pollutant indicators to understand the air quality variations resulting due to festivals and crop stubble burning'**. 
+
+The following datasets will be used for creating models and their key features are highlighted:
+
+1. city_hour.csv – Air Quality Data (Rao 2020)
+ 
+    Contains the air pullutants values for indian cities form 1 jan 2015 to 1 July 2020
+    
+    1. Key Predictors: PM2.5, PM10, SO2, NOx, CO, O3, NH3
+    2. Response: AQI (Air Quality Index)
+    3. Planned use: primary dataset to be used for predicting the AQI
+    4. Current Limitation:
+        - contains significant missing values
+        - data avaiable until 1 July 2020
+    
+2. crop_production_major_3_crops.csv – Agricultural Data (Unified Portal for Agricultural Statistics 2025)
+    
+    Contains the crop production data for the major 3 crops (Rice, wheat and sugarcane)
+    whose stuble burning cause the maximum air pollution
+    1. Key features: crop, state and season
+    2. Planned use: to determine the impact of crop buring on AQI
+    3. Current Limitation: 
+        - the data is avaiable state wise and needs to be mapped with cities 
+        to merge with air pollutant dataset 
+        - season (Rabi, Kharif, Zaid ) need to be converted to their respective months 
+    
+
+3. Indian_festival_dates_2015_2020.xlsx – Festival Dates data
+    
+    Contains the major indian festival and their dates
+    1. Key features: fetival and date
+    2. Planned use: to determine the impact of festivals on AQI by merging with the primary dataset
+    
+4. India_city_state.csv - Indian city and state mapping (Pandey, P 2020)
+    
+    Contains the states and city mapping for india
+    1. Key features: state, city
+    2. Planned use: used to provide additional functionality to the primary dataset,
+    will be used for merging crop_production_major_3_crops.csv to the primary dataset 
+    
+\newpage
+# Part 2 Data Pre-processing
+  The initial dataset contained significant amount of outliers for the pollutant values, and to study the effect of crop burning and festival on the air quality the primary dataset needs to be merged with the crop_production_major_3_crops.csv and Indian_festival_dates_2015_2020.xlsx. For the final goal of predicting the AQI values for the year 2020, Seasonal ARIMA (SARIMA) model will be used. 
+  Preprocessing steps done:
+  
+  1. Imputation of missing values for predictors using K-Nearest Neighbors (KNN) done using _step_impute_knn_, since average and median values would result in overestimating or underestimation of true values. To reduce the complexity and run time for KNN imputation, a subset of the dataset we are interested in is taken (Delhi and Ahmedabad and most polluted months October to February). 
+  2. The categorical predictors are converted to dummy variables using _step_dummy_ for its use in baseline linear models
+  3. Removal of collinear variables NO and NO2 as identified in part B 
+  4. Removal of variables with low importance (Benzene, Xylene and toluene) as identified in part B 
+  5. Imputation of missing AQI values using the CPBC guidelines 
+  6. Merging of datasets crop_production_major_3_crops.csv and Indian_festival_dates_2015_2020.xlsx with city_hour.csv (Air Quality Data) to increase functionality of the dataset 
+  7. Scaling of the data will be done based on the model to be used i.e. few models such as Lasso Regression benefit from scaling however, tree based models do not
+  8. Splitting of data into train and test set for evaluating model performance and avoid overfitting, using 80-20 split and stratified by AQI values 
+  
+  After preprocessing the following trend can be observed:
+
+```{r preprocessing, include=FALSE, cache=TRUE}
+
+# Read and clean the dataset
+city_hour <- read_csv("city_hour.csv") %>%
+  clean_names()
+
+# Convert datetime to Date and extract month/year
+city_hour <- city_hour %>%
+  mutate(date = as.Date(datetime),
+         month = month(date),
+         year = year(date))
+
+# Filter for high-pollution months in Delhi and Ahmedabad
+city_filtered <- city_hour %>%
+  filter(city %in% c("Delhi", "Ahmedabad"),
+         month %in% c(10, 11, 12, 1, 2))
+
+# required variables for time series modeling
+aqi_data <- city_filtered %>%
+  select( aqi, date, city, pm2_5, pm10, so2, n_ox, nh3, co, o3, no, no2, benzene, toluene, xylene)
+
+# Remove the variables identified as low importance or highly collinear
+aqi_data <- aqi_data %>%
+  select(-benzene, -xylene, -toluene, -no, -no2)
+
+# recipe for KNN imputation 
+base_aqi_recipe <- recipe( aqi ~ ., data = aqi_data) %>%
+  step_impute_knn(all_numeric_predictors(), neighbors = 5) %>% 
+  step_dummy(all_nominal_predictors())
+
+# Prepare and apply the recipe
+aqi_prep <- prep(base_aqi_recipe)
+base_aqi_ready <- bake(aqi_prep, new_data = NULL)
+
+# Save for future use
+  saveRDS(base_aqi_ready, "base_aqi_preprocessed.rds")
+
+# View summary of final dataset
+skim_without_charts(base_aqi_ready)
+```
+
+
+```{r aqi_calculation_cpbc, include=FALSE, cache=TRUE}
+# Code for calculating the AQI using CPBC guidelines 
+preprocessed_data <- base_aqi_ready
+
+# Define Sub-Index functions
+aqi_pm25 <- function(x) {
+  case_when(
+    x <= 30 ~ x * 50 / 30,
+    x <= 60 ~ 50 + (x - 30) * 50 / 30,
+    x <= 90 ~ 100 + (x - 60) * 100 / 30,
+    x <= 120 ~ 200 + (x - 90) * 100 / 30,
+    x <= 250 ~ 300 + (x - 120) * 100 / 130,
+    x > 250 ~ 400 + (x - 250) * 100 / 130,
+    TRUE ~ NA_real_
+  )
+}
+
+aqi_pm10 <- function(x) {
+  case_when(
+    x <= 50 ~ x,
+    x <= 100 ~ x,
+    x <= 250 ~ 100 + (x - 100) * 100 / 150,
+    x <= 350 ~ 200 + (x - 250),
+    x <= 430 ~ 300 + (x - 350) * 100 / 80,
+    x > 430 ~ 400 + (x - 430) * 100 / 80,
+    TRUE ~ NA_real_
+  )
+}
+
+aqi_so2 <- function(x) {
+  case_when(
+    x <= 40 ~ x * 50 / 40,
+    x <= 80 ~ 50 + (x - 40) * 50 / 40,
+    x <= 380 ~ 100 + (x - 80) * 100 / 300,
+    x <= 800 ~ 200 + (x - 380) * 100 / 420,
+    x <= 1600 ~ 300 + (x - 800) * 100 / 800,
+    x > 1600 ~ 400 + (x - 1600) * 100 / 800,
+    TRUE ~ NA_real_
+  )
+}
+
+aqi_nox <- function(x) {
+  case_when(
+    x <= 40 ~ x * 50 / 40,
+    x <= 80 ~ 50 + (x - 40) * 50 / 40,
+    x <= 180 ~ 100 + (x - 80) * 100 / 100,
+    x <= 280 ~ 200 + (x - 180) * 100 / 100,
+    x <= 400 ~ 300 + (x - 280) * 100 / 120,
+    x > 400 ~ 400 + (x - 400) * 100 / 120,
+    TRUE ~ NA_real_
+  )
+}
+
+aqi_nh3 <- function(x) {
+  case_when(
+    x <= 200 ~ x * 50 / 200,
+    x <= 400 ~ 50 + (x - 200) * 50 / 200,
+    x <= 800 ~ 100 + (x - 400) * 100 / 400,
+    x <= 1200 ~ 200 + (x - 800) * 100 / 400,
+    x <= 1800 ~ 300 + (x - 1200) * 100 / 600,
+    x > 1800 ~ 400 + (x - 1800) * 100 / 600,
+    TRUE ~ NA_real_
+  )
+}
+
+aqi_co <- function(x) {
+  case_when(
+    x <= 1 ~ x * 50,
+    x <= 2 ~ 50 + (x - 1) * 50,
+    x <= 10 ~ 100 + (x - 2) * 100 / 8,
+    x <= 17 ~ 200 + (x - 10) * 100 / 7,
+    x <= 34 ~ 300 + (x - 17) * 100 / 17,
+    x > 34 ~ 400 + (x - 34) * 100 / 17,
+    TRUE ~ NA_real_
+  )
+}
+
+aqi_o3 <- function(x) {
+  case_when(
+    x <= 50 ~ x,
+    x <= 100 ~ 50 + (x - 50),
+    x <= 168 ~ 100 + (x - 100) * 100 / 68,
+    x <= 208 ~ 200 + (x - 168) * 100 / 40,
+    x <= 748 ~ 300 + (x - 208) * 100 / 539,
+    x > 748 ~ 400 + (x - 748) * 100 / 539,
+    TRUE ~ NA_real_
+  )
+}
+
+# Apply sub-index functions and calculate AQI
+preprocessed_data <- preprocessed_data %>%
+  rowwise() %>%
+  mutate(
+    # Sub-index calculations
+    si_pm25 = aqi_pm25(pm2_5),
+    si_pm10 = aqi_pm10(pm10),
+    si_so2  = aqi_so2(so2),
+    si_nox  = aqi_nox(n_ox),
+    si_nh3  = aqi_nh3(nh3),
+    si_co   = aqi_co(co),
+    si_o3   = aqi_o3(o3),
+    
+    # Logical checks
+    has_pm = !is.na(si_pm25) | !is.na(si_pm10),
+    valid_count = sum(!is.na(c(si_pm25, si_pm10, si_so2, si_nox, si_nh3, si_co, si_o3))),
+    
+    # Final AQI logic:
+    # Use existing aqi if available; otherwise, calculate it
+    calculated_aqi = if_else(
+      !is.na(aqi),                         # if AQI already present
+      aqi,                                 # use it
+      if_else(                             # else: calculate it using the formula
+        has_pm & valid_count >= 3,
+        max(c(si_pm25, si_pm10, si_so2, si_nox, si_nh3, si_co, si_o3), na.rm = TRUE),
+        NA_real_
+      )
+    )
+  ) %>%
+  ungroup()
+
+```
+
+```{r preparing_merging_datasets, include=FALSE, cache=TRUE}
+# logic for merging the datasets 
+
+# preprocessed data 
+preprocessed_data <- preprocessed_data %>%
+  mutate(month = lubridate::month(date))
+
+# crop production dataset cleaning 
+crop_production_expanded <- crop_production %>%
+  clean_names() %>%
+  # Filter for relevant states and standardize names
+  filter(state %in% c("Delhi", "Gujarat")) %>%
+  mutate(
+    state = str_to_lower(state),
+    city = case_when(
+      state == "delhi" ~ "delhi",
+      state == "gujarat" ~ "ahmedabad",
+      TRUE ~ NA_character_
+    ),
+    season = str_to_title(season)
+  ) %>%
+  
+  # Define season-month mapping
+  mutate(
+    season_months = case_when(
+      season == "Kharif" ~ list(6:9),     # June to September
+      season == "Rabi"   ~ list(c(10:12, 1:3)), # October to March
+      season == "Zaid"   ~ list(3:6),     # March to June
+      TRUE ~ list(NA_integer_)
+    )
+  ) %>%
+  
+  # Expand each record to monthly data
+  unnest(season_months) %>%
+  rename(month = season_months) %>%
+  
+  # Select and arrange final columns
+  select(
+    city,
+    crop,
+    season,
+    month
+  )
+
+crop_production_expanded <- crop_production_expanded %>%
+  filter(!is.na(month))
+
+# festival dataset
+
+skim_without_charts(festival_data)
+
+festival_data <- festival_data %>%
+  mutate(date = as.Date(Date)) %>% 
+  select(-Date)
+
+```
+
+```{r merging_datasets, include=FALSE, cache=TRUE}
+merged_data_crop <- preprocessed_data %>%
+  mutate(city = if_else(city_Delhi == 1, "delhi", "ahmedabad")) %>%
+  left_join(crop_production_expanded, by = c("city", "month"))
+
+merged_data_crop_festival <- merged_data_crop %>%
+  left_join(festival_data, by = "date") %>% 
+  mutate(
+    festival = if_else(is.na(Festival), "other", Festival)
+  ) %>% select(-Festival)
+```
+
+
+```{r graph1, echo=FALSE, fig.width=7, fig.height=3, fig.cap="Yearly average AQI for Delhi and Ahmedabad during high-pollution months (2015–2020)."}
+# Ensure year column exists
+preprocessed_data <- preprocessed_data %>%
+  mutate(year = lubridate::year(date))
+
+# Compute average AQI per year and city (using dummy variable)
+aqi_yearly_city <- preprocessed_data %>%
+  mutate(
+    # Convert dummy variable back to city names
+    city = if_else(city_Delhi == 1, "Delhi", "Ahmedabad")
+  ) %>%
+  filter(!is.na(calculated_aqi)) %>%
+  group_by(city, year) %>%
+  summarise(mean_AQI = mean(calculated_aqi, na.rm = TRUE), .groups = "drop")
+
+# Create the plot with proper city labels
+ggplot(aqi_yearly_city, aes(x = year, y = mean_AQI, color = city)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  labs(title = "Yearly Average AQI by City",
+       x = "Year", 
+       y = "Mean AQI",
+       color = "City") +
+  scale_color_manual(values = c("Delhi" = "blue", "Ahmedabad" = "red")) +
+  theme_minimal()
+```
+
+Figure 1 shows that for Ahmedabad there is a steep rise in Yearly Average AQI values from the year 2016 to 2018 and significant fall in the year 2019 and Delhi shows the lowest Yearly Average AQI values in the year 2019 and 2020. 
+\
+
+```{r graph2, echo=FALSE, fig.width=7, fig.height=3, fig.cap="Monthly average AQI comparison between Delhi and Ahmedabad across high pollution months."}
+monthly_aqi <- preprocessed_data %>%
+  mutate(
+    city = if_else(city_Delhi == 1, "Delhi", "Ahmedabad"),
+    year = year(date),
+    month = month(date, label = TRUE),  
+    month_year = paste(month, year)     
+  ) %>%
+  filter(!is.na(calculated_aqi)) %>%
+  group_by(city, year, month, month_year) %>%
+  summarise(
+    mean_aqi = mean(calculated_aqi, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    month_year = factor(month_year, 
+                       levels = unique(month_year[order(year, month)]))
+    
+  )
+
+ggplot(monthly_aqi, aes(x = month_year, y = mean_aqi, color = city, group = city)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  labs(title = "Most polluted months Average AQI Comparison",
+       subtitle = "Delhi vs Ahmedabad",
+       x = "Month-Year",
+       y = "Average AQI") +
+  scale_color_manual(values = c("Delhi" = "#e63946", "Ahmedabad" = "#1d3557")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+Figure 2 expands further showing the trend of most polluted months average AQI with significant peaks in AQI during the period of October to November. 
+
+\newpage
+
+# Part 3 Model Selection
+
+  To address the complexity of the Air pollution dataset obtained after part 2, multiple machine learning models were selected:
+  
+  1. Linear Regression: it serves as a baseline model to interpret the general trends between pollutants and AQI. However, due to the linear assumptions of the model it may fail to capture the non linear relationships in the dataset. 
+  
+  2. Lasso Regression: it is a regularized version of linear regression which adds an L1 penalty to the model. This can help in automatic feature selection by setting the coefficient of irrelevant features to zero. Hence, it can be used to select the most relevant features for predicting the air quality in the dataset. 
+  
+  3. Random Forest: it is a machine learning model that builds multiple decision trees and combines their outputs to make more accurate predictions than simple decision tree. It was selected due its ability to capture non linear relationships and reduce overfitting in the air quality dataset. 
+  
+  4. XGBoost (eXtreme Gradient Boosting): the model was selected because is is an extremely powerful machine learning model that can handle large datasets quickly and efficiently, similar to random forest it also uses decision tree however, it builds the decision trees sequentially, with each tree correcting errors caused by previously trained trees. (GeeksforGeeks, 2024)
+  
+  5. Seasonal ARIMA (AutoRegressive Integrated Moving Average): Seasonal ARIMA is a time series model that can help account for seasonality in the data and thus help in forecasting. It will be used for predicting the trend in AQI for the remainder of year 2020 where data is not available. The results from this model will be utilized in Part D to provide additional context in the report. (Radečić, 2024)
+  
+```{r data_split, include=FALSE}
+ml_model_data <- merged_data_crop_festival %>%
+  select(
+    date,
+    pm2_5, pm10, so2, n_ox, nh3, co, o3,          
+    month, city_Delhi,                            
+    crop, season, festival,                       
+    calculated_aqi                                # target variable
+  ) 
+
+set.seed(1941585)  # for reproducibility
+
+# Split the dataset: 80% training, 20% testing
+data_split <- initial_split(ml_model_data, prop = 0.8, strata = calculated_aqi)
+
+# Create train and test sets
+ml_train <- training(data_split)
+ml_test  <- testing(data_split)
+```
+
+```{r}
+colnames(ml_model_data)
+```
+
+```{r model_recipie, include=FALSE}
+recipe_reg <- recipe(calculated_aqi ~ ., data = ml_train) %>%
+  update_role(date, new_role = "ID") %>%
+  step_rm(season) %>% 
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors())
+
+recipe_tree <- recipe(calculated_aqi ~ ., data = ml_train) %>%
+  update_role(date, new_role = "ID") %>%
+  step_rm(season) %>% 
+  step_dummy(all_nominal_predictors(), one_hot = TRUE)
+```
+
+```{r model_spec, include=FALSE}
+lm_spec <- linear_reg() %>% set_engine("lm")
+lasso_spec <- linear_reg( penalty = 1, mixture = 1) %>% set_engine("glmnet")
+rf_spec <- rand_forest(trees = 500) %>% set_engine("ranger") %>% set_mode("regression")
+xgb_spec <- boost_tree(trees = 500, learn_rate = 0.1, tree_depth = 6) %>% set_engine("xgboost") %>% set_mode("regression")
+
+```
+
+```{r model_workflow, include=FALSE, cache=TRUE}
+# Linear regression
+lm_wf <- workflow() %>% add_model(lm_spec) %>% add_recipe(recipe_reg) %>% fit(data = ml_train)
+
+# Lasso regression
+lasso_wf <- workflow() %>% add_model(lasso_spec) %>% add_recipe(recipe_reg) %>% fit(data = ml_train)
+
+# Random forest
+rf_wf <- workflow() %>% add_model(rf_spec) %>% add_recipe(recipe_tree) %>% fit(data = ml_train)
+
+# XGBoost
+xgb_wf <- workflow() %>% add_model(xgb_spec) %>% add_recipe(recipe_tree) %>% fit(data = ml_train)
+
+```
+
+<!--The performance of the models was calculated for both the training and testing data using regression metrics (Root Mean Squared Error (RMSE), R-squared \(R^2\), and Mean Absolute Error (MAE)) without any tuning of hyper-parameters.-->
+
+
+```{r fitting_to_training_data, echo=FALSE, cache=TRUE}
+library(yardstick)
+
+lm_fit <- lm_wf %>% fit(data = ml_train)
+lasso_fit <- lasso_wf %>% fit(data = ml_train)
+rf_fit <- rf_wf %>% fit(data = ml_train)
+xgb_fit <- xgb_wf %>% fit(data = ml_train)
+
+# 1. Create predictions for training data
+lm_preds <- predict(lm_fit, ml_train) %>% bind_cols(ml_train)
+lasso_preds <- predict(lasso_fit, ml_train) %>% bind_cols(ml_train)
+rf_preds <- predict(rf_fit, ml_train) %>% bind_cols(ml_train)
+xgb_preds <- predict(xgb_fit, ml_train) %>% bind_cols(ml_train)
+
+# 2. Define function to extract metrics
+get_metrics <- function(pred_df) {
+  metrics(pred_df, truth = calculated_aqi, estimate = .pred)
+}
+
+# 3. Collect metrics
+lm_metrics <- get_metrics(lm_preds)
+lasso_metrics <- get_metrics(lasso_preds)
+rf_metrics <- get_metrics(rf_preds)
+xgb_metrics <- get_metrics(xgb_preds)
+
+# 4. Combine into one table
+library(dplyr)
+
+model_metrics <- bind_rows(
+  lm_metrics %>% mutate(model = "Linear Regression"),
+  lasso_metrics %>% mutate(model = "Lasso Regression"),
+  rf_metrics %>% mutate(model = "Random Forest"),
+  xgb_metrics %>% mutate(model = "XGBoost")
+) %>% select(model, .metric, .estimate)
+
+
+# since i have added this in section 5 hence no need here 
+# # Display neatly
+# library(tidyr)
+# # pivot_wider(model_metrics, names_from = .metric, values_from = .estimate)%>%
+#   # arrange(rmse)
+
+```
+
+
+
+```{r fitting_to_testing_data, echo=FALSE, cache=TRUE}
+library(yardstick)
+
+# 1. Predictions
+lm_preds <- predict(lm_wf, ml_test) %>% bind_cols(ml_test)
+lasso_preds <- predict(lasso_wf, ml_test) %>% bind_cols(ml_test)
+rf_preds <- predict(rf_wf, ml_test) %>% bind_cols(ml_test)
+xgb_preds <- predict(xgb_wf, ml_test) %>% bind_cols(ml_test)
+
+# 2. Compute metrics
+metrics_test <- list(
+  Linear_Regression = lm_preds %>% metrics(truth = calculated_aqi, estimate = .pred),
+  Lasso_Regression  = lasso_preds %>% metrics(truth = calculated_aqi, estimate = .pred),
+  Random_Forest     = rf_preds %>% metrics(truth = calculated_aqi, estimate = .pred),
+  XGBoost           = xgb_preds %>% metrics(truth = calculated_aqi, estimate = .pred)
+)
+
+# 3. Combine all into a table
+library(dplyr)
+test_metrics_summary <- bind_rows(metrics_test, .id = "Model") %>%
+  filter(.metric %in% c("rmse", "rsq", "mae")) %>%
+  select(-.estimator) %>% 
+  tidyr::pivot_wider(names_from = .metric, values_from = .estimate) %>%
+  arrange(rmse)
+
+# test_metrics_summary
+
+```
+
+<!--
+Random Forest performs the best across all metrics, with lowest RMSE and MAE and highest R² (≈ 87% variance explained).
+
+XGBoost also performs well, slightly below Random Forest.
+
+Linear and Lasso regression perform similarly and much worse than tree-based models, indicating the AQI relationship is likely nonlinear and complex.-->
+
+# Part 4 Model Refinement
+
+  To improve the prediction of the models other than linear regression, the hyper-parameters tuning needs to be performed for each model.
+  
+## Tuning strategy:
+
+  1. Cross Validation (CV): Perform a 5 fold CV stratified by AQI values to ensure that the models can generalize new unseen data
+  2. Parallel Processing: due to the volume and variety of the data coupled with the hyper-parameter tuning for faster computation using _doParallel_ package 
+  
+## Hyper-parameter tuning grid:
+  1. Lasso Regression: _penalty_ term ($\lambda$) which controls the amount of shrinkage in regression coefficients. Tuning range was from from \(10^{-4}\) to \(10^{0}\).
+  2. Random forest: 
+      - _mtry_: the number of features (variables) the Random Forest model considers at each split when building a decision tree.
+      The tuning range was from 1 to 10.
+      - _min_n_: minimum number of data points allowed in a node for it to be further split. The tuning range was from 2 to 10. 
+  3. XGBoost:
+      - _tree_depth_: it controls the maximum depth of the tree, deep trees can identify complex patterns. The tuning range was from 3 to 10.
+      - _learn_rate_: it controls how much each tree contributes to correcting the errors from previous tree. The tuning range was from 0.001 and 0.1.
+
+<!--Model tuning specifications-->
+```{r model_tuning_spec, echo=FALSE, cache=TRUE}
+# Tuning Specification for the different models 
+library(doParallel)
+
+set.seed(1941585)
+
+# Parallel backend
+cl <- makePSOCKcluster(parallel::detectCores() - 1)
+registerDoParallel(cl)
+
+# Simplified model specs with only main tunable params
+
+# Lasso: only penalty
+lasso_spec_tune <- linear_reg(
+  penalty = tune(),
+  mixture = 1
+) %>% set_engine("glmnet") %>% set_mode("regression")
+
+# Random Forest: only mtry and min_n
+rf_spec_tune <- rand_forest(
+  mtry = tune(),
+  trees = 500,
+  min_n = tune()
+) %>% set_engine("ranger") %>% set_mode("regression")
+
+# XGBoost: only tree_depth and learn_rate
+xgb_spec_tune <- boost_tree(
+  trees = 500,
+  tree_depth = tune(),
+  learn_rate = tune()
+) %>% set_engine("xgboost") %>% set_mode("regression")
+
+# Workflows
+lasso_wf_tune <- workflow() %>% add_recipe(recipe_reg) %>% add_model(lasso_spec_tune)
+rf_wf_tune <- workflow() %>% add_recipe(recipe_tree) %>% add_model(rf_spec_tune)
+xgb_wf_tune <- workflow() %>% add_recipe(recipe_tree) %>% add_model(xgb_spec_tune)
+
+# Grids
+lasso_grid <- grid_regular(
+  penalty(range = c(10^-4, 10^0)),
+  levels = 20
+)
+
+rf_grid <- grid_regular(
+  mtry(range = c(1, 10)),
+  min_n(range = c(2, 10)),
+  levels = 5
+)
+
+xgb_grid <- grid_regular(
+  tree_depth(range = c(3, 10)),
+  learn_rate(range = c(0.001, 0.1)),
+  levels = 10
+)
+
+# CV folds
+cv_folds <- vfold_cv(ml_train, v = 5, strata = calculated_aqi)
+```
+
+<!--Model refinement commented since it takes time to run again and again about 30 minutes for tuning-->
+```{r model_refinement_tuning, eval=FALSE, echo=FALSE}
+# Tune models
+lasso_tune_res <- tune_grid(lasso_wf_tune, resamples = cv_folds, grid = lasso_grid, metrics = metric_set(rmse, rsq, mae))
+rf_tune_res <- tune_grid(rf_wf_tune, resamples = cv_folds, grid = rf_grid, metrics = metric_set(rmse, rsq, mae))
+xgb_tune_res <- tune_grid(xgb_wf_tune, resamples = cv_folds, grid = xgb_grid, metrics = metric_set(rmse, rsq, mae))
+
+# Stop cluster after tuning
+stopCluster(cl)
+registerDoSEQ()
+
+saveRDS(lasso_tune_res, "lasso_tune_res.rds")
+saveRDS(rf_tune_res, "rf_tune_res.rds")
+saveRDS(xgb_tune_res, "xgb_tune_res.rds")
+
+```
+
+<!--load_hyper_parameter_tuning_results_from_database-->
+```{r load_hyper_parameter_tuning_results_from_database, eval=TRUE, echo=FALSE}
+lasso_tune_res <- readRDS("lasso_tune_res.rds")
+rf_tune_res <- readRDS("rf_tune_res.rds")
+xgb_tune_res <- readRDS("xgb_tune_res.rds")
+```
+
+<!--
+## Model Tuning Results:
+```{r}
+show_best(lasso_tune_res, metric = "rmse", n = 3)
+show_best(rf_tune_res, metric = "rmse", n = 3)
+show_best(xgb_tune_res, metric = "rmse", n = 3)
+```
+-->
+
+
+<!--fitting_workflow_with_tuned_parameters-->
+```{r fitting_workflow_with_tuned_parameters, eval=FALSE, echo=FALSE}
+# Select best params by RMSE
+best_lasso <- select_best(lasso_tune_res, metric = "rmse")
+best_rf <- select_best(rf_tune_res, metric = "rmse")
+best_xgb <- select_best(xgb_tune_res, metric ="rmse")
+
+# Finalize and fit models (same as before)
+
+# Finalize workflows with best params
+final_lasso_wf <- finalize_workflow(lasso_wf_tune, best_lasso)
+final_rf_wf <- finalize_workflow(rf_wf_tune, best_rf)
+final_xgb_wf <- finalize_workflow(xgb_wf_tune, best_xgb)
+
+
+# Fit finalized models on training data
+final_lasso_fit <- fit(final_lasso_wf, data = ml_train)
+final_rf_fit <- fit(final_rf_wf, data = ml_train)
+final_xgb_fit <- fit(final_xgb_wf, data = ml_train)
+
+# Save fitted models to RDS files for later use
+saveRDS(final_lasso_fit, "final_lasso_fit.rds")
+saveRDS(final_rf_fit, "final_rf_fit.rds")
+saveRDS(final_xgb_fit, "final_xgb_fit.rds")
+```
+
+<!--load_tuning_fit_from_database-->
+```{r load_tuning_fit_from_database, eval=TRUE, echo=FALSE}
+# Load tuning results
+final_lasso_fit <- readRDS("final_lasso_fit.rds")
+final_rf_fit    <- readRDS("final_rf_fit.rds")
+final_xgb_fit   <- readRDS("final_xgb_fit.rds")
+```
+
+
+# Part 5 Performance Description
+
+  To evaluate the AQI predictions made by the different models, three regression metrics were used:
+  
+  1. Root Mean Square Error (RMSE): it is used to measure how far off the predictions are from the actual values, this was the primary metric for the comparison of the models performance. Lower value of RMSE indicates a better model for the dataset.
+  
+  2. R-squared \(R^2\) (RSQ): it indicates the variation in AQI (due to different pollutants and other factors) is explained by the model. Higher values of \(R^2\) mean better explanatory power.
+  
+  3. Mean Absolute Error (MAE)): it is used to measure the average amount by which the model's AQI predictions differ from actual values, lower values of MAE represent better performance of the model. 
+  
+  The following tibbles contain the performance of models measured by the three metrics for training and testing data **before and after hyper-parameter tuning** sorted by their RMSE values:
+
+\newpage   
+## Performance of the model on the training data (Default Parameters no Tuning)
+```{r echo=FALSE}
+# Display neatly
+library(tidyr)
+pivot_wider(model_metrics, names_from = .metric, values_from = .estimate)%>%
+arrange(rmse)
+```
+
+## Performance of the model on the testing data (Default Parameters no Tuning) 
+```{r echo=FALSE}
+test_metrics_summary
+```
+
+## Performance of the model after tuning on Training data
+
+```{r performance_metrics_after_tuning_on_train_data, echo=FALSE}
+# Predict on training data
+train_metrics <- bind_rows(
+  predict(final_lasso_fit, ml_train) %>% bind_cols(ml_train) %>% 
+    metrics(truth = calculated_aqi, estimate = .pred) %>% mutate(model = "Lasso Regression"),
+
+  predict(final_rf_fit, ml_train) %>% bind_cols(ml_train) %>% 
+    metrics(truth = calculated_aqi, estimate = .pred) %>% mutate(model = "Random Forest"),
+
+  predict(final_xgb_fit, ml_train) %>% bind_cols(ml_train) %>% 
+    metrics(truth = calculated_aqi, estimate = .pred) %>% mutate(model = "XGBoost"),
+
+  predict(lm_wf, ml_train) %>% bind_cols(ml_train) %>% 
+    metrics(truth = calculated_aqi, estimate = .pred) %>% mutate(model = "Linear Regression")
+)
+
+train_metrics_wide <- train_metrics %>%
+  select(model, .metric, .estimate) %>%
+  pivot_wider(names_from = .metric, values_from = .estimate)%>%
+  arrange(rmse)
+
+train_metrics_wide
+```
+
+## Performance of the model after tuning on Testing data
+```{r performance_metrics_after_tuning_on_test_data, echo=FALSE}
+# Function already defined:
+predict_and_eval <- function(model_fit, test_data, truth_var = "calculated_aqi") {
+  preds <- predict(model_fit, test_data) %>% bind_cols(test_data)
+  metrics(preds, truth = !!sym(truth_var), estimate = .pred)
+}
+
+# Get test metrics
+test_metrics <- bind_rows(
+  predict_and_eval(final_lasso_fit, ml_test) %>% mutate(model = "Lasso Regression"),
+  predict_and_eval(final_rf_fit,    ml_test) %>% mutate(model = "Random Forest"),
+  predict_and_eval(final_xgb_fit,   ml_test) %>% mutate(model = "XGBoost"),
+  predict_and_eval(lm_wf,           ml_test) %>% mutate(model = "Linear Regression")
+)
+
+test_metrics_wide <- test_metrics %>%
+  select(model, .metric, .estimate) %>%
+  pivot_wider(names_from = .metric, values_from = .estimate)%>%
+  arrange(rmse)
+
+test_metrics_wide
+```
+
+\newpage
+# Part 6 Results Interpretation
+ 
+ From the performance of the models in part 5, it is clear that non linear models 
+ like random forest and XGBoost did a better job in predicting the AQI values as 
+ compared to linear models. Before tuning of the hyperparameters, both these models 
+ already outperformed linear and lasso regression. This proves that the AQI has a 
+ highly complex non linear relationship with the pollutants. 
+ 
+ After tuning the models 
+ - XGBoost has the lowest RMSE thus it fits the data very well and 
+ has comparable RMSE on the test data, it benefits the most from hyper parameter 
+ tuning reducing the train RMSE from 116 to 20.7 as well as the Test RMSE 155 to 120  
+ 
+ - Random forest on the other hand is able to generalize better 
+ than the other models and has been benefited by hyper-parameter tuning 
+ reducing the train RMSE from 72.6 to 48.2 for training dataset 
+ 
+ - Linear Models such as linear and Lasso regression do not benefit from tuning 
+ and have no changes to RMSE values
+ 
+ 
+ Table 1: RMSE Comparison Before Hyperparameter Tuning
+
+| Model             | Train RMSE | Test RMSE |
+|------------------|------------|-----------|
+| Random Forest     | 72.6       | 143       |
+| XGBoost           | 116        | 155       |
+| Linear Regression | 248        | 249       |
+| Lasso Regression  | 248        | 249       |
+
+ Table 2: RMSE Comparison After Hyperparameter Tuning
+
+| Model             | Train RMSE | Test RMSE |
+|------------------|------------|-----------|
+| XGBoost           | 20.7       | 121       |
+| Random Forest     | 48.2       | 120       |
+| Linear Regression | 248        | 249       |
+| Lasso Regression  | 248        | 249       |
+
+Although Random Forest had marginally better test results than XGBoost, XGBoost is to be selected as the final model due to the large improvement after tuning with Train RMSE as 20.7 fitting the model perfectly and it also achieved the lowest MAE on the test data indicating that it provides consistent predictions. 
+
+The following tibble shows the best parameters for XGBoost after hyper-parameter tuning.
+```{r}
+print(show_best(xgb_tune_res, metric = "rmse", n =3))
+```
+
+
+\newpage
+# Part 7 References
+
+1. Rao, R 2020, _Air Quality Data in India (2015 - 2020)_, Kaggle, viewed 3 June 2025, <https://www.kaggle.com/datasets/rohanrao/air-quality-data-in-india>
+
+2. Kumar, A 2025, _Pollution in India_, Encyclopedia Britannica, viewed 5 June 2025, <https://www.britannica.com/topic/pollution-in-India.>
+
+3. Unified Portal for Agricultural Statistics: UPAg 2025, _APY Cropwise Insights_, UPAG, viewed 5 June 2025, <https://upag.gov.in/.>
+
+4. Central Pollution Control Board n.d., _About National Air Quality Index_, Central Pollution Control Board, viewed 3 June 2025, <https://cpcb.nic.in/displaypdf.php?id=bmF0aW9uYWwtYWlyLXF1YWxpdHktaW5kZXgvQWJvdXRfQVFJLnBkZg>
+
+8. Pandey, P 2020, _Indian cities database_, Kaggle, viewed 1 July 2025, <https://www.kaggle.com/datasets/parulpandey/indian-cities-database>
+
+9. GeeksforGeeks (2024), _Difference Between Random Forest and XGBoost_, GeeksforGeeks, <https://www.geeksforgeeks.org/machine-learning/difference-between-random-forest-vs-xgboost/.>
+
+10. Radečić, D (2024). _Time Series Forecasting in R: From Moving Averages to Seasonal ARIMA_, Appsilon, <https://www.appsilon.com/post/r-time-series-forecasting>
