@@ -1,0 +1,199 @@
+---
+title: "Big Data Analysis and Project"
+subtitle: "Assignment 1: Part A (Question Formation and Exploratory Analysis)"
+author: "Nishant Singh a1941585"
+date: "June 10, 2025"
+
+output:
+  pdf_document: default
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning = FALSE)
+pacman::p_load(tidyverse, tidymodels, skimr, readxl)
+
+```
+
+# 1 Problem Description
+
+India, the 7th largest country by area with a population of 1.438 Billion people (highest in the world), stands as one of the most culturally and spiritually rich nation in the world. It is a developing country that has emerged as one of the fastest growing economies of the world and it associates its success to its industrial and agricultural sectors as well as a strong investment in its infrastructure, however these advancements have come at a high environmental cost particularly on the air quality of the country. According to CNN, 96% of the population lives with air quality 7 times higher than World Health Organization guidelines (Regan 2024). 
+
+This project aims to use historical air quality data to predict the **Air Quality Index (AQI)** and analyze how it is affected by major festivals and agricultural practices. Religious festivals such as Diwali, Holi, and New Year Celebrations are celebrated with the burning of firecrackers and bonfires which release a lot of smoke and air pollutants in the air. Similarly, bad agricultural practices such as crop residue burning after crop harvest worsens AQI of the country. 
+
+The AQI calculations in this project are based on the **Central Pollution Control Board (CPCB)** guidelines, which account for key pollutants like PM2.5 ($Particulate\ Matter\ \leq\ 2.5\ \mu m$), PM10 ($Particulate\ Matter\ \leq\ 10\ \mu m$), NO$_2$ (Nitrogen Dioxide), SO$_2$ (Sulfur Dioxide), CO (Carbon Monoxide), and O$_3$ (Ozone). The project focuses on the agricultural and festival impact on the air pollution; however, it does not include industrial and vehicle emissions which are also contributors to air pollution in India (Kumar 2025).
+
+## 1.1 Motivation
+By understanding the impact of these practices on the AQI levels the project hopes to uncover the patterns in air pollution trends of India and help in raising awareness by educating people about the harmful effects of the current practices. The insights from this analysis could also help inform the government to mitigate the effects of these practices by creating new policies to curb air pollution in India and thus improve health and lives of billions of people. Finally, my initial question: **"Analyzing the effects of festival and agricultural practices on the AQI of India"** (Kumar 2025)
+
+Additional Questions to ask:
+
+1. Which festival results in the worst air quality in India?
+2. How did Covid-19 impact the air quality?
+3. What is the cooling off period after a festival for the Air Quality to return to the normal level?
+
+# 2 Dataset Description
+## 2.1 Dataset used and their links:
+1. `city_hour.csv`: collected from [**Kaggle.com**](https://www.kaggle.com/datasets/rohanrao/air-quality-data-in-india)
+2. `crop_production_major_3_crops.csv`: collected from [**Unified Portal for Agricultural Statistics (UPAg)**](https://upag.gov.in/) 
+3. `Indian_festival_dates_2015_2020.xlsx`: collected from [**timeanddate.com**](https://www.timeanddate.com)
+
+## 2.2 Dataset description:
+
+1. city_hour.csv – Air Quality Data (Rao 2020)
+
+    The **primary dataset used is `city_hour.csv`**, which contains time series (hourly) air quality pollutant observations such as PM2.5, PM10, NO2, SO2, CO, O3, Benzene, Toluene and Xylene collected from various cities in India from the year 2015 to 2020 which will be used to predict the AQI and categorise the AQI into 6 categories good, satisfactory, moderate, poor, very poor and severe. It satisfies 3 out of 4V's of big data: 
+    
+    1. Volume as it contains 707,875 rows and 16 columns
+    2. Velocity due to the high frequency (hourly) data collected between 1 Jan 2015 and 1 July 2020 which can potentially be improved by using recent datasets released by the Central Pollution Control Board (CPCB)
+    3. Variety as the datasets used in theis project have a range of variables (quantitative, categorical and time series)
+    
+    However, there are significant number of missing values of pollutants in **`city_hour.csv`** due to lack of reported data from the monitoring stations, which can affect the veracity of the dataset. To enhance the analysis other `crop_production_major_3_crops.csv`, `crop_production_major_3_crops.csv` used will be combined with the primary dataset `city_hour.csv` to improve the variety of data and act as a supplemental data source to the primary dataset. (Rao 2020)
+
+2. crop_production_major_3_crops.csv – Agricultural Data (Unified Portal for Agricultural Statistics 2025)
+
+    The `crop_production_major_3_crops.csv` dataset contains the agricultural statistics of India collected from UPAg website, but the limitation of the website is that it only provides the data either crop wise or state wise, hence I collected 3 main crops data i.e. rice, wheat and sugarcane since they have the highest level of production and also cause the most amount of pollution, later I used these dataset to create a combined dataset of these crops `crop_production_major_3_crops.csv`. It consists of the types of crops grown in different seasons (Rabi, Kharif and Zaid) across all the states of India from the year 2015 to 2024. It is used as supplemental dataset to **`city_hour.csv`** dataset to detemine the impact of stuble burning's impact on the air quality. 
+
+3. Indian_festival_dates_2015_2020.xlsx – Festival Dates data
+
+    The `Indian_festival_dates_2015-2020.xlsx` dataset contains the festival names and their dates between 2015 and 2020, this dataset will be used to determine festival's impact on the air quality. The festivals have been selected due to their impact caused on the air quality due to the methods of celebrations in these festivals. It is also used as supplemental dataset to **`city_hour.csv`** dataset and help visualise the aftermath of celebrations on the air quality.
+
+## 2.3 Dataset Diagram
+The figure below shows the structure of the datasets used for this project:
+```{r db_diagram, echo=TRUE, out.width='100%', fig.cap="Datasets columns with their datatypes used in the project"}
+
+knitr::include_graphics("../AQI_of_India_2015_to_2020/image/Final_DB_Diagram.png")
+
+```
+
+
+
+# 3 Initial Data Processing
+
+## 3.1. Data Processing
+Before doing any analysis on the datasets its important to have a clean and reliable source of data which will further enhance the accuracy of the results to do this we need to get an overview of the datasets used in this project and perform **Exploratory Data Analysis (EDA)** on the datasets which will reveal important information such as number of missing values, average, standard deviation and other important details about the columns of the datasets.
+
+
+```{r }
+### 1.1 EDA on city_hour.csv dataset
+city_hour <- read_csv("city_hour.csv")
+skim_without_charts(city_hour)
+```
+
+The results show that there are a large number of missing values in the dataset in each column particularly in PM10. In the column AQI there is a high standard deviation of `162.112729` when compared to the various percentiles of the datasets which reveals that there are many outliers which present in the dataset. 
+
+```{r }
+# finding the top 10 cities with the worst AQI ignoring the missing values 
+city_hour %>%
+  group_by(City) %>% summarise( avg_AQI = mean(AQI, na.rm = TRUE)) %>%
+  arrange(desc(avg_AQI))
+```
+
+The top cities that have the highest average AQI value (Ignoring missing values) are Ahmedabad, Delhi and Patna with their respective AQI values 453.54, 260.15 and 237.92 and from these values they fall under Severe to poor range, which may cause breathing issues along with discomfort to most people on prolonged exposure (CPBC 2025). 
+
+```{r echo=FALSE, fig.width=7, fig.height=4}
+# finding the top months that correspond to the worst AQI ignoring the missing values 
+city_hour %>%
+  mutate(month = floor_date(Datetime, "month")) %>%
+  group_by(month) %>%
+  summarise(avg_AQI = mean(AQI, na.rm = TRUE)) %>%
+  ggplot(aes(month, avg_AQI)) +
+  geom_line() +
+  geom_smooth(method = "loess", se = FALSE, color = "darkred", linetype = "dashed")+
+  labs(title = "Monthly Average AQI in India", x = "Month", y = "AQI")
+
+```
+Finally from the figure above we can see that the AQI is the highest during the months of December to January and there is a gradual decline in the AQI, which suggests an improvement in the air Quality. However the figure obtained does not include NA's and missing values for AQI and thus can change when the missing values are handled. 
+
+
+## 3.2. Deficiencies and pitfalls in the data
+There are several deficiencies and structural challenges in the current datasets which need to be addressed to ensure reliable results and ML models accuracy. One major external factor to consider is the impact of the COVID-19 pandemic in the year 2020. There was nationwide lockdown due to which there were restrictions on gatherings, factories were closed and a significant reduction in vehicle present on roads. Hence the data from the year 2020 must be carefully studied and treated as an exceptional case during modeling, as it may not represent typical patterns of air pollution.
+
+Additionally, presence of large number of missing values and outliers in important variables like PM2.5, AQI in the primary dataset poses a significant challenge to the model creation as it can lead to inconsistent results or introduce biases. Hence, it is essential to impute or remove these values before proceeding with the next steps for modelling the data. This will ensures data quality and improves the reliability of models that will be used later in this project and help answer the questions described in _1.1 motivation section_. 
+
+For preparing the final dataset to be used in this project, the supplemental datasets need to be joined with the primary dataset. However, they currently lack proper join keys. The challenges and the plan to handle the challenges is provided below: 
+
+### 3.2.1 challenges in dataset: city_hour.csv and Indian_festival_dates_2015-2020.xlsx dataset
+  The Datetime column in city_hour.csv should be split into separate Date and Time columns so that join is possible with the Indian_festival_dates_2015-2020.xlsx dataset, which only contains date variable which can be seen from _Figure 1: Datasets columns with their datatypes used in the project in the previous section._ allowing us to see the impact of various festivals on the AQI of India.
+
+### 3.2.2 challenges in dataset: crop_production_major_3_crops.csv 
+  The crop_production_major_3_crops.csv dataset only contains State data however, it would need a City column to enable join with city_hour.csv, which contains the city-level air quality data thus we need to create a city and state mapping and add those values to enable join of the datasets. 
+  
+  The crop production dataset is currently in a wide format (multiple year columns per crop). For the ease of analysis and compatibility with tidy data principles, it should be converted to a long format, where each row represents a single crop-year combination. 
+  
+  The crop_production_major_3_crops.csv dataset contains 4 distinct seasons (see output below), which should be converted to their respective month groups (example: "Kharif" -> June to October) and which can be later expanded to a longer format of individual months. 
+  
+  Finally, crop burning occurs after the harvest of the crop typically in the last month of crop season hence, column `crop_burning_month` needs to be added to the dataset, this would enable us to use the final combined dataset to answer the primary question. 
+
+```{r echo = FALSE}
+crop_production <- read_csv("crop_production_major_3_crops.csv")
+
+skim_city <- skim_without_charts(crop_production)
+
+skim_city %>%
+  dplyr::filter(skim_type == "character")
+
+unique(crop_production$Season)
+
+```
+
+
+# 4 Refined Problem and Plan
+## 4.1. Data Analysis tentative plan
+
+The Data analysis process steps that will be followed for this project:
+
+1. Data Cleaning:
+  Clean the individual datasets to address missing, duplicate and NA values by imputing or deleting them
+  
+2. Data Transformation
+  Transform the datasets into tidy format which ensures that each variable is stored in its own column and each observation in its own row
+  
+3. Data Integration 
+  supplementary datasets( festival dataset and crop production dataset) will be joined with the primary dataset `city_hour.csv` to get an enhanced dataset that contains festival and crop data along with the air quality data
+  
+4. Exploratory Data Analysis (EDA)
+  EDA will be conducted on this enhanced dataset to find patterns and relationships in the data (example: are certain months related to increase in AQI and how it varies in the month when Diwali is celebrated?)
+  
+5. Data Splitting 
+  Splitting the dataset into training and testing data where the training data will be used to develop and train the ML models and finally testing data will be used to evaluate the performance of the model on unseen data
+  
+6. Data Preprocessing and Feature Selection
+  Pre process the data to prepare it for modeling by handling outliers, encoding the categorical variables and getting the most important features of the dataset using feature selection algorithms such as Principal Component Analysis (PCA) and thus reduce the dimension
+  
+7. Model Development 
+  Random Forest regression model will be used to predict the Air Quality Index (AQI) based on the selected features due to its robustness and ability to handle complex and nonlinear relationships in the datasets 
+  
+8. Model Evaluation 
+   Performance of the model will be evaluated using performance metrics such as R-squared and Root Mean Squared Error (RMSE). These metrics will be calculated for both the training as well as testing data to ensure that the model developed is generalizable
+
+## 4.2. Visualization techniques tentative plan
+
+To understand and visualize the effects of festival and agricultural practices on the AQI of India time series line plots will be used that show the trend of AQI over the years. Boxplots will be very effective to show the AQI trends before, during and after major events like crop burning or festivals. Finally, I plan to use a Shiny web application (developed using the shiny package in R) to associate the changes to AQI due to crop burning and festivals that will allow users to enter custom pollutant values (example: PM2.5, PM10, NO2, CO2) and receive a real-time predicted AQI using the trained Random Forest model visually shown on the map of India enabling the user to interactively visualize these changes.
+
+## 4.3. Refined Question 
+After the initial analysis of the datasets and understanding the deficiencies and pitfalls in the data, the initial question can be modified to a Refined Question: **"Predicting the AQI of New Delhi and Ahmedabad and visualize the specific impact of festivals (Diwali) and agricultural practices, along with the time it takes for AQI to return to normal levels after such events."**. New Delhi was chosen since it has one of the worst air quality due to it location, it is surrounded by Haryana, Uttar Pradesh and close to Punjab. These states not only have the highest crop production in the country (Unified Portal for Agricultural Statistics 2025) but also are the most densely populated and thus can be an ideal choice for the analysis. (Basu 2019, p. 239)
+
+## 4.4 Backup Question(s) and Dataset(s) 
+
+### 4.4.1 Using the same dataset:
+Backup Question 1: What specific spikes in air pollutants (PM2.5, PM10, NO2) can be associated with variations in the crop production volume for the crops (wheat, rice, sugarcane) in the nearby cities?
+
+Backup Question 2: Does the impact of Diwali celebrations on AQI differ in northern and southern states of India?
+
+### 4.4.2 Using a different dataset (weather dataset combined with the primary AQI dataset):
+
+Backup Question 3: What is the role of rainfall in affecting the temporal changes in the air quality index (AQI) over the short term and long term periods across various states in India?
+
+# 5 References
+1. Rao, R 2020, _Air Quality Data in India (2015 - 2020)_, Kaggle, viewed 3 June 2025, <https://www.kaggle.com/datasets/rohanrao/air-quality-data-in-india>
+
+2. Kumar, A 2025, _Pollution in India_, Encyclopedia Britannica, viewed 5 June 2025, <https://www.britannica.com/topic/pollution-in-India.>
+
+3. Unified Portal for Agricultural Statistics: UPAg 2025, _APY Cropwise Insights_, UPAG, viewed 5 June 2025, <https://upag.gov.in/.>
+
+4. Central Pollution Control Board n.d., _About National Air Quality Index_, Central Pollution Control Board, viewed 3 June 2025, <https://cpcb.nic.in/displaypdf.php?id=bmF0aW9uYWwtYWlyLXF1YWxpdHktaW5kZXgvQWJvdXRfQVFJLnBkZg>
+
+5. Basu, M 2019, ‘The Great Smog of Delhi’, _Lung India_, vol. 36(3), pp. 239, DOI:10.4103/lungindia.lungindia_363_18. 
+
+6. Regan, H 2024, _Air pollution in Asia worsened in 2023, with Bangladesh, Pakistan, and India among the worst hit_, CNN, viewed 5 June 2025, <https://edition.cnn.com/2024/03/18/climate/air-pollution-report-2023-asia-climate-intl-hnk.>
