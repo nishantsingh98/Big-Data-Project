@@ -22,7 +22,7 @@ The project investigates **air quality in Indian cities**, focusing on predictin
 ---
 
 ## Project Workflow
-
+Each part has to be run sequentially one after the other, part D may take significant running for the first time depending on the device and memory, however, later runs will be faster due to usage of saved files being run instead of computing the results every single time  
 ### Part A – Problem Formulation  
 - Defined research questions around AQI prediction, seasonal variations, and event-based pollution spikes (festivals, crop burning).
 
@@ -40,6 +40,24 @@ The project investigates **air quality in Indian cities**, focusing on predictin
 - Summarized results in a report.  
 - Found **PM2.5 and PM10** as dominant pollutants in Delhi and Ahmedabad.  
 - Highlighted **severe AQI spikes during Diwali** and impact of policies on **air quality**.
+---
+
+## How to Reproduce same results 
+1. Open the .Rmd files in RStudio.
+
+2. Run the parts sequentially in order:
+
+2.1. Part_A_Initial_questions.Rmd
+
+2.2. Part_B_Big_Data_Analysis.Rmd
+
+2.3. Part_C_Big_Data_Modelling.Rmd 
+
+Note: The first run of Part D may take significant time depending on your device and available memory.
+Subsequent runs will be faster, as saved intermediate files are reused instead of recomputing results each time.
+
+Part_D_Comprehensive_Report.pdf is the final report compiled using the results from Part A, B and C.
+
 ---
 ## References
  
@@ -63,6 +81,7 @@ The project investigates **air quality in Indian cities**, focusing on predictin
 18.	World Health Organization (WHO) 2025, Air quality, energy and health, [online], World Health Organization, , viewed 5 August 2025, https://www.who.int/teams/environment-climate-change-and-health/air-quality-energy-and-health/health-impacts 
 19.	Shagun (2024). Centre doubles fine for stubble burning; farmers to pay up to Rs 30,000, Down To Earth, viewed 5 August 2025, https://www.downtoearth.org.in/air/centre-doubles-fine-for-stubble-burning-farmers-to-pay-up-to-rs-30000 
 20.	ShareAmerica 2024, India’s initiatives for cleaner air, [online], ShareAmerica, viewed 5 August 2025, https://share.america.gov/indias-initiatives-for-cleaner-air/ 
+
 
 
 
