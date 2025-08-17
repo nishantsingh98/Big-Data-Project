@@ -1,7 +1,4 @@
 # Big-Data-Project
-Big Data Project on AQI analysis and prediction for India 
-
-#  Air Quality Prediction in India (2015–2020)
 
 This repository contains the analysis and machine learning modelling work for the **Big Data Analysis and Project** course at the University of Adelaide.  
 The project investigates **air quality in Indian cities**, focusing on predicting **Air Quality Index (AQI)** and analyzing the influence of **festivals** and **crop burning ** on pollution levels.
@@ -66,6 +63,7 @@ The project investigates **air quality in Indian cities**, focusing on predictin
 18.	World Health Organization (WHO) 2025, Air quality, energy and health, [online], World Health Organization, , viewed 5 August 2025, https://www.who.int/teams/environment-climate-change-and-health/air-quality-energy-and-health/health-impacts 
 19.	Shagun (2024). Centre doubles fine for stubble burning; farmers to pay up to Rs 30,000, Down To Earth, viewed 5 August 2025, https://www.downtoearth.org.in/air/centre-doubles-fine-for-stubble-burning-farmers-to-pay-up-to-rs-30000 
 20.	ShareAmerica 2024, India’s initiatives for cleaner air, [online], ShareAmerica, viewed 5 August 2025, https://share.america.gov/indias-initiatives-for-cleaner-air/ 
+
 
 
 
