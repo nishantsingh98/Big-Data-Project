@@ -30,9 +30,9 @@ The project investigates **air quality in Indian cities**, focusing on predictin
 - Defined research questions around AQI prediction, seasonal variations, and event-based pollution spikes (festivals, crop burning).
 
 ### Part B – Data Analysis  
-- Consolidated and cleaned multiple datasets.  
-- Conducted exploratory analysis of pollutants. 
-- Identified seasonal trends and regional differences in AQI.
+- Performed initial analysis and visualisation of the data 
+- Visualisation of relationships in the dataset 
+- Problem statement refinement
 
 ### Part C – Machine Learning Modelling  
 - Built predictive models: **Lasso Regression, Random Forest, XGBoost, and Linear Regression**.  
@@ -40,10 +40,9 @@ The project investigates **air quality in Indian cities**, focusing on predictin
 - Selected **XGBoost** as the best-performing model.
 
 ### Part D – Comprehensive Report  
-- Summarized results in a professional report.  
+- Summarized results in a report.  
 - Found **PM2.5 and PM10** as dominant pollutants in Delhi and Ahmedabad.  
-- Highlighted **severe AQI spikes during Diwali** and **post-harvest stubble burning**.
-
+- Highlighted **severe AQI spikes during Diwali** and impact of policies on **air quality**.
 ---
 ## References
  
@@ -67,5 +66,6 @@ The project investigates **air quality in Indian cities**, focusing on predictin
 18.	World Health Organization (WHO) 2025, Air quality, energy and health, [online], World Health Organization, , viewed 5 August 2025, https://www.who.int/teams/environment-climate-change-and-health/air-quality-energy-and-health/health-impacts 
 19.	Shagun (2024). Centre doubles fine for stubble burning; farmers to pay up to Rs 30,000, Down To Earth, viewed 5 August 2025, https://www.downtoearth.org.in/air/centre-doubles-fine-for-stubble-burning-farmers-to-pay-up-to-rs-30000 
 20.	ShareAmerica 2024, India’s initiatives for cleaner air, [online], ShareAmerica, viewed 5 August 2025, https://share.america.gov/indias-initiatives-for-cleaner-air/ 
+
 
 
