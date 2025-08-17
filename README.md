@@ -43,20 +43,20 @@ Each part has to be run sequentially one after the other, part D may take signif
 ---
 
 ## How to Reproduce same results 
-1. Open the .Rmd files in RStudio.
+1. Open the `.Rmd` files in **RStudio**.  
 
-2. Run the parts sequentially in order:
-
- 2.1. Part_A_Initial_questions.Rmd
-
- 2.2. Part_B_Big_Data_Analysis.Rmd
-
- 2.3. Part_C_Big_Data_Modelling.Rmd 
+2. Run the parts sequentially in the following order:
+   - **Part_A_Initial_questions.Rmd**  
+   - **Part_B_Big_Data_Analysis.Rmd**  
+   - **Part_C_Big_Data_Modelling.Rmd**
+     
+3. **Part D – Comprehensive Report**  
+   - `Part_D_Comprehensive_Report.pdf` is the **final compiled report**, generated using the outputs from Parts A, B, and C.
 
 Note: The first run of Part D may take significant time depending on your device and available memory.
 Subsequent runs will be faster, as saved intermediate files are reused instead of recomputing results each time.
 
-Part_D_Comprehensive_Report.pdf is the final report compiled using the results from Part A, B and C.
+
 
 ---
 ## References
@@ -81,6 +81,7 @@ Part_D_Comprehensive_Report.pdf is the final report compiled using the results f
 18.	World Health Organization (WHO) 2025, Air quality, energy and health, [online], World Health Organization, , viewed 5 August 2025, https://www.who.int/teams/environment-climate-change-and-health/air-quality-energy-and-health/health-impacts 
 19.	Shagun (2024). Centre doubles fine for stubble burning; farmers to pay up to Rs 30,000, Down To Earth, viewed 5 August 2025, https://www.downtoearth.org.in/air/centre-doubles-fine-for-stubble-burning-farmers-to-pay-up-to-rs-30000 
 20.	ShareAmerica 2024, India’s initiatives for cleaner air, [online], ShareAmerica, viewed 5 August 2025, https://share.america.gov/indias-initiatives-for-cleaner-air/ 
+
 
 
 
